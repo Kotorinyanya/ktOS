@@ -2,7 +2,7 @@
 SRCS = src/main.c src/ktos.c src/helper.c
 
 # Binary will be generated with this name (.elf, etc)
-PROJ_NAME = hello_world
+PROJ_NAME = ktos
 
 DEBUG = 1
 

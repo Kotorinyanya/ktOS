@@ -12,7 +12,7 @@
 
 #define MAX_TASKS_SIZE 10
 #define MAX_QUEUE_SIZE 5
-#define MEM_POOL_SIZE 2500
+#define MEM_POOL_SIZE 3000
 
 
 #endif //KTOS_CONF_H

@@ -11,46 +11,43 @@
 
 typedef void(*TaskFunction)(void *);
 
-// Codes definition
+typedef enum STATUS_CODE {
+/*******  Task Status Code Definitions **************************************************************/
+    TASK_STATE_READY                   = 1,    /*!< task is ready to be loaded                      */
+    TASK_STATE_DELAYED                 = 2,    /*!< task delayed(sleeping)                          */
+    TASK_STATE_KILLED                  = 3,    /*!< task killed                                     */
+    TASK_STATE_WAIT_TO_SENT_QUEUE      = 4,    /*!< task was blocked on pushing data to queue       */
+    TASK_STATE_WAIT_TO_RECEIVE_QUEUE   = 5,    /*!< task was blocked on pulling data from queue     */
+    TASK_STATE_RUNNING                 = 6,    /*!< task executing                                  */
 
-enum RETURN_CODE {
-    SYSCALL_UNDEFINED,
-    SYSCALL_OK,
-    SYSCALL_FAILED,
-    OS_ALREADY_STARTED,
-    OS_START_FAILED,
-    TASK_OK,
-    TASK_AMOUNT_MAXIMUM_EXCEEDED,
-    TASK_STACK_SIZE_NOT_ALIGNED,
-    MEM_POOL_MAXIMUM_EXCEEDED,
-    QUEUE_OK,
-    QUEUE_FAILED
-};
+/*******  Queue Status Code Definitions *************************************************************/
+    QUEUE_EMPTY                        = 7,    /*!< queue empty                                     */
+    QUEUE_FILLED                       = 8,    /*!< queue filled                                    */
+    QUEUE_SENT_OK                      = 9,    /*!< succeeded to push data to queue                 */
+    QUEUE_SENT_FAILED                  = 10,   /*!< failed to push data to queue                    */
+    QUEUE_RECEIVE_OK                   = 11,   /*!< succeeded to pull data from queue               */
+    QUEUE_RECEIVE_FAILED               = 12    /*!< failed to pull data from queue                  */
+} STATUS_CODE_DEF;
 
-enum TASK_STATE_CODE {
-    TASK_STATE_READY,
-    TASK_STATE_DELAYED,
-    TASK_STATE_KILLED,
-    TASK_STATE_WAIT_TO_SENT_QUEUE,
-    TASK_STATE_WAIT_TO_RECEIVE_QUEUE
-};
+typedef enum RETURN_CODE {
+/*******  Return Code Definitions *******************************************************************/
+    SYSCALL_UNDEFINED                  = 13,   /*!< undefined syscall                               */
+    SYSCALL_OK                         = 14,   /*!< syscall successful                              */
+    SYSCALL_FAILED                     = 15,   /*!< syscall failed                                  */
+    OS_ALREADY_STARTED                 = 16,   /*!< the operating system is already started         */
+    OS_START_FAILED                    = 17,   /*!< failed to start the operating system            */
+    TASK_OK                            = 18,   /*!< succeeded to create task                        */
+    TASK_AMOUNT_MAXIMUM_EXCEEDED       = 19,   /*!< too many tasks                                  */
+    TASK_STACK_SIZE_NOT_ALIGNED        = 20,   /*!< bad stack size(not aligned to 8-byte)           */
+    MEM_POOL_MAXIMUM_EXCEEDED          = 21    /*!< not enough memory                               */
+} RETURN_CODE_DEF;
 
-enum CALL_CODE {
-    SYSCALL_START_OS,
-    SYSCALL_TASK_SLEEP,
-    SYSCALL_TASK_KILL,
-    SYSCALL_SWITCH_CONTEXT,
-    SYSCALL_FATAL_ERROR
-};
-
-enum QUEUE_CODE {
-    QUEUE_EMPTY,
-    QUEUE_FILLED,
-    QUEUE_SENT_OK,
-    QUEUE_SENT_FAILED,
-    QUEUE_RECEIVE_OK,
-    QUEUE_RECEIVE_FAILED
-};
+typedef enum SYSCALL_CODE {
+/*******  Syscall Code Definitions *******************************************************************/
+    SYSCALL_START_OS                   = 22,
+    SYSCALL_TASK_SLEEP                 = 23,
+    SYSCALL_TASK_KILL                  = 24
+} SYSCALL_CODE_DEF;
 
 
 // Struct definition
@@ -88,7 +85,6 @@ typedef struct {
     uint32_t stack_size;
     uint32_t stack_top;
     uint32_t stack_bottom;
-    hardware_stack_frame_t hardware_stack_frame;
     software_stack_frame_t software_stack_frame;
 } task_control_block_t;
 

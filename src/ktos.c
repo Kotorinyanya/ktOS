@@ -13,35 +13,44 @@ static queue_block_t queues[MAX_QUEUE_SIZE];
 static task_control_block_t tasks[MAX_TASKS_SIZE];
 // Task var.
 static uint8_t task_count = 0;
-static uint8_t current_task = (uint8_t)-1;
 static uint8_t default_task = 0;  // the idle task
+uint8_t current_task = 0;
 
 // Memory pool.
-uint32_t *pool[MEM_POOL_SIZE];
+uint8_t *pool[MEM_POOL_SIZE];
 uint32_t pool_count = 0;
 
 // OS var.
-static uint32_t systicks = 0;
+uint32_t systicks = 0;
 static uint8_t is_os_started = 0;
 
 
 
 // Yield is to relinquish control of the current task.
 // In this case, PendSV_Handler will be called.
-static void _Yield(void)
+static inline void _Yield(void)
 {
     SCB->ICSR = SCB_ICSR_PENDSVSET;
 }
 
 // Set the CPU to idle state
-static void _IdleTask(void)
+void _IdleTask(void)
 {
     while(1) {
         // "wfe" (A.K.A. wait for event)
-        __asm__ __volatile("wfe");
+        __asm__ ("wfe");
     }
 }
 
+void _InitTicker(void)
+{
+    SysTick_Config(SystemCoreClock / SYSTICK_FREQUENCY_HZ);
+
+    NVIC_SetPriorityGrouping(0);
+    NVIC_SetPriority(SysTick_IRQn, NVIC_EncodePriority(0, 0, 0));
+    NVIC_SetPriority(SVCall_IRQn, NVIC_EncodePriority(0, 1, 0));
+    NVIC_SetPriority(PendSV_IRQn, NVIC_EncodePriority(0, 2, 0));
+}
 
 // The System Tick Time (SysTick) generates interrupt requests on a regular basis.
 // This allows an OS to carry out context switching to support multiple tasking.
@@ -50,7 +59,7 @@ void SysTick_Handler(void)
     if(!is_os_started) return;
     systicks++;
     
-    for(int i = 0; i <= task_count; i++) {
+    for(int i = 0; i < task_count; i++) {
 
         task_control_block_t * this_task = tasks + i;
 
@@ -66,20 +75,18 @@ void SysTick_Handler(void)
 
         // Deal with tasks blocked by queue
         switch(this_task->status) {
-            case TASK_STATE_WAIT_TO_SENT_QUEUE: {
+            case TASK_STATE_WAIT_TO_SENT_QUEUE:
                 if(GetEmptyQueue() != NULL) {
                     this_task->status = TASK_STATE_READY;
                     this_task->sleep_time = 0;
                 }
                 break;
-            }
-            case TASK_STATE_WAIT_TO_RECEIVE_QUEUE: {
+            case TASK_STATE_WAIT_TO_RECEIVE_QUEUE:
                 if(GetFilledQueue() != NULL) {
                     this_task->status = TASK_STATE_READY;
                     this_task->sleep_time = 0;
                 }
                 break;
-            }
         }
 
     }
@@ -97,20 +104,28 @@ static uint32_t _ktSvcStartOs(void)
     // Set all queues to be empty.
     InitQueue();
 
-    // Create idle task as the default task.
-    uint8_t idle_task = TaskCreate((TaskFunction) _IdleTask, (void *)0, 0x100, 0xff);
+    _InitTicker();
 
+    // Create idle task as the default task.
+    uint8_t result = TaskCreate((TaskFunction)_IdleTask, 0, 512, 0xff);
+    if(result != TASK_OK) {
+        return OS_START_FAILED;
+    }
+
+    current_task = task_count - 1; //the idle task
     // Load idle task, return to thread mode, other tasks will be loaded upon context switch.
-    register int r0 asm("r0") = tasks[idle_task].stack_top;
+    uint32_t stack_top = tasks[current_task].stack_top;
+    register int r1 asm("r1") = (int)&is_os_started;
+    register int r2 asm("r2") = 1;
     __asm__ __volatile__ (
         R"(
         ldmia %0!, {r4-r11}
         msr psp, %0
-        ldr r0, =0xFFFFFFFD
-        bx r0
+        str %2, [%1]
+        ldr pc, =0xFFFFFFFD
         )"
         :
-        : "r" (r0)
+        : "r" (stack_top), "r" (r1), "r" (r2)
     );
 
     // Should not be here
@@ -120,38 +135,27 @@ static uint32_t _ktSvcStartOs(void)
 
 static uint32_t _ktSvcTaskKill(uint8_t task_id)
 {
+    EnterCritical();
     tasks[task_id].status = TASK_STATE_KILLED;
-    _Yield(); //switch the context.
-    while(1); //once context changed, the program will no longer return to this thread.
-    return 0;
-}
-
-static uint32_t _ktSvcTaskSleep(uint8_t task_id, uint32_t timeout)
-{
-    tasks[task_id].status = TASK_STATE_DELAYED;
-    tasks[task_id].sleep_time = timeout;
+    LeaveCritical();
     _Yield();
     return 0;
 }
 
-// "syscall" wrapper
-static inline uint32_t _Syscall(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3)
+static uint32_t _ktSvcTaskSleep(uint8_t task_id, uint32_t sleep_time)
 {
-    uint32_t result;
-    __asm__ __volatile__ (
-        R"(
-        mov r0, %1
-        mov r1, %2
-        mov r2, %3
-        mov r3, %4
-        svc #0x80
-        mov %0, r0
-        )"
-        : "=r" (result)
-        : "r" (r0), "r" (r1), "r" (r2), "r" (r3)
-        : "r0", "r1", "r2", "r3"
-    );
-    return result;
+    EnterCritical();
+    task_control_block_t * this_task = tasks + task_id;
+    if(this_task->status == TASK_STATE_DELAYED) {
+        LeaveCritical();
+        _Yield();
+        return 0;
+    }
+    this_task->status = TASK_STATE_DELAYED;
+    this_task->sleep_time = sleep_time;
+    LeaveCritical();
+    _Yield();
+    return 0;
 }
 
 // Supervisor Calls
@@ -194,27 +198,53 @@ __attribute__((naked)) void SVC_Handler(void)
     );
 }
 
+// "syscall" wrapper
+static inline uint32_t _Syscall(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3)
+{
+    uint32_t result;
+    __asm__ __volatile__ (
+        R"(
+        mov r0, %1
+        mov r1, %2
+        mov r2, %3
+        mov r3, %4
+        svc #0x80
+        mov %0, r0
+        )"
+        : "=r" (result)
+        : "r" (r0), "r" (r1), "r" (r2), "r" (r3)
+        : "r0", "r1", "r2", "r3"
+    );
+    return result;
+}
+
 // Context switch methods
 //   called by PendSV_Handler.
 uint32_t _ContextSwitcher(uint32_t stack_top)
 {
-    EnterCritical();
-
     task_control_block_t * this_task = tasks + current_task;
-    task_control_block_t * next_task = tasks + default_task;
+    task_control_block_t * next_task = tasks + current_task;
 
     // Save the stack pointer passed by r0
     this_task->stack_top = stack_top;
+    
+    if(this_task->status == TASK_STATE_RUNNING) {
+        this_task->status = TASK_STATE_READY;
+    }
 
     // Sreach for the task with highest priority
     uint8_t highest_priority = 0xff;
+    uint8_t current_task_i = current_task;
     uint8_t i = task_count;
+
+    // if task_count_i == 1, this loop won't be triggered.
     while(--i) {
-        current_task++;
-        if(current_task > task_count) {
-            current_task = 0;
+        current_task_i++;
+        if(current_task_i >= task_count) {
+            current_task_i = 0;
         }
-        this_task = tasks + current_task;
+        
+        this_task = tasks + current_task_i;
 
         // Switch to the task with highest priority,
         // if there were multiple tasks at the highest,
@@ -222,9 +252,12 @@ uint32_t _ContextSwitcher(uint32_t stack_top)
         if(this_task->status == TASK_STATE_READY
                 && this_task->priority <= highest_priority) {
             next_task = this_task;
-            highest_priority = this_task->priority;
+            current_task = current_task_i;
+            highest_priority = next_task->priority;
         }
     }
+
+    next_task->status = TASK_STATE_RUNNING;
     
     // Load the stack pointer back to r0
     return next_task->stack_top;
@@ -266,13 +299,13 @@ uint8_t TaskCreate(
     EnterCritical();
 
     // Check if the stack is aligned to 8 bytes
-    if(stack_size % 8 != 0) {
+    if(stack_size % 2 != 0) {
         LeaveCritical();
         return TASK_STACK_SIZE_NOT_ALIGNED;
     }
 
     // Check if reached max tasks amount
-    if(task_count == MAX_TASKS_SIZE - 1) {
+    if(task_count == MAX_TASKS_SIZE) {
         LeaveCritical();
         return TASK_AMOUNT_MAXIMUM_EXCEEDED;
     }
@@ -287,40 +320,37 @@ uint8_t TaskCreate(
 
     // Init task control block
     task_control_block_t * this_task = tasks + task_count++;
-
-    //memset(this_task->hardware_stack_frame, 0, sizeof(hardware_stack_frame_t));
-    //memset(this_task->software_stack_frame, 0, sizeof(software_stack_frame_t));
-
-    this_task->hardware_stack_frame.r0 = (uint32_t)(uint32_t*)arg;
-    this_task->hardware_stack_frame.pc = (uint32_t)(uint32_t*)entry;
-    this_task->hardware_stack_frame.lr = (uint32_t)(uint32_t*)TaskKill;
-    this_task->hardware_stack_frame.psr = 0x21000000; //default PSR value
-
     this_task->id = (uint8_t)(task_count - 1); //task id increases by numerical order
+    this_task->priority = priority;
+    this_task->status = TASK_STATE_READY;
     this_task->stack_size = stack_size;
     this_task->stack_bottom = (uint32_t)stack_bottom;
-    this_task->priority = priority;
-    this_task->sleep_time = 0;
-    this_task->status = TASK_STATE_READY;
+    this_task->stack_top = this_task->stack_bottom - (16 * sizeof(uint32_t));
 
-    this_task->stack_top = this_task->stack_bottom - sizeof(software_stack_frame_t) - sizeof(hardware_stack_frame_t);
+    // Init stack frame
+    hardware_stack_frame_t * hardware_stack_frame = (hardware_stack_frame_t*)(this_task->stack_bottom - (8 * sizeof(uint32_t)));
+    software_stack_frame_t * software_stack_frame = (software_stack_frame_t*)this_task->stack_top;
+    //memset(hardware_stack_frame, 0, sizeof(hardware_stack_frame));
+    //memset(software_stack_frame, 0, sizeof(software_stack_frame));
+
+    hardware_stack_frame->r0 = (uint32_t)arg;
+    hardware_stack_frame->pc = (uint32_t)entry;
+    hardware_stack_frame->lr = (uint32_t)TaskKill;
+    hardware_stack_frame->psr = 0x21000000; //default PSR value
 
     LeaveCritical();
-    return this_task->id;
+    return TASK_OK;
 
 }
 
 void TaskKill(void)
 {
-    tasks[current_task].status = TASK_STATE_KILLED;
-    _Yield(); //switch the context.
-    while(1); //once context changed, the program will no longer return to this thread.
+    _Syscall(SYSCALL_TASK_KILL, current_task, 0, 0);
 }
 
 void TaskSleep(uint32_t sleep_time)
 {
-    tasks[current_task].status = TASK_STATE_DELAYED;
-    tasks[current_task].sleep_time = sleep_time;
+    _Syscall(SYSCALL_TASK_SLEEP, current_task, sleep_time, 0);
 }
 
 // Queue methods
@@ -365,15 +395,14 @@ uint8_t QueueSendToBlock(uint32_t item, uint32_t timeout)
     
     // Try to push item to the queue
     if(this_queue != NULL) {
-        this_queue->item_ptr = &item;
+        this_queue->item_ptr = item;
         this_queue->status = QUEUE_FILLED;
         LeaveCritical();
         return QUEUE_SENT_OK;
     }
 
     // If there is no queue empty, check timeout
-    if(!timeout) {
-    // '0' for no timeout
+    if(timeout == 0) {
         LeaveCritical();
         return QUEUE_SENT_FAILED;
     }
@@ -386,6 +415,7 @@ uint8_t QueueSendToBlock(uint32_t item, uint32_t timeout)
     _Yield();
 
     // The task is ready again, let's try to push item to the queue again
+    EnterCritical();
     this_queue = GetEmptyQueue();
     if(this_queue != NULL) {
         this_queue->item_ptr = &item;
@@ -406,7 +436,7 @@ uint8_t QueueReciveFromBlock(uint32_t *item_ptr, uint32_t timeout)
 
     // Try to pull item from the queue
     if(this_queue != NULL) {
-        item_ptr = this_queue->item_ptr;
+        *item_ptr = this_queue->item_ptr;
         this_queue->status = QUEUE_EMPTY;
         LeaveCritical();
         return QUEUE_RECEIVE_OK;
@@ -414,7 +444,6 @@ uint8_t QueueReciveFromBlock(uint32_t *item_ptr, uint32_t timeout)
 
     // If there is no queue filled, check timeout
     if(!timeout) {
-    // '0' for no timeout
         LeaveCritical();
         return QUEUE_RECEIVE_FAILED;
     }
@@ -427,6 +456,7 @@ uint8_t QueueReciveFromBlock(uint32_t *item_ptr, uint32_t timeout)
     _Yield();
 
     // The task is ready again, let's try to pull item from the queue again
+    EnterCritical();
     this_queue = GetFilledQueue();
     if(this_queue != NULL) {
         item_ptr = this_queue->item_ptr;
@@ -447,14 +477,14 @@ static uint8_t critical_depth = 0;
 
 void EnterCritical(void)
 {
-    critical_depth++;
-    __set_PRIMASK(1);
+    if(critical_depth++ == 0){
+        __set_PRIMASK(1);
+    }
 }
 
 void LeaveCritical(void)
 {
-    critical_depth--;
-    if(critical_depth == 0) {
+    if(--critical_depth == 0) {
         __set_PRIMASK(0);
     }
 }
