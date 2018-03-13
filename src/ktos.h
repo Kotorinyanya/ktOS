@@ -8,6 +8,7 @@
 #define KTOS_KTOS_H
 
 #include "types.h"
+#inlcude "config.h"
 #include "stm32f10x.h"
 #include "helper.h"
 

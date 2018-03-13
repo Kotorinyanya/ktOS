@@ -9,13 +9,6 @@
 
 #include "stm32f10x.h"
 
-#define SYSTICK_FREQUENCY_HZ 1000
-#define SYSTICK_INTERVAL_MS 1000 / SYSTICK_FREQUENCY_HZ  // Please make sure that SYSTICK_INTERVAL_MS is an interger.
-
-#define MAX_TASKS_SIZE 10
-#define MAX_QUEUE_SIZE 5
-#define MAX_QUEUE_CONTROL_BLOCK_SIZE 5
-#define MEM_POOL_SIZE 3000
 
 typedef void(*TaskFunction)(void *);
 
