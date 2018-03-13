@@ -21,11 +21,13 @@ void foo(void)
 {
     uint32_t count = 0;
     uint8_t result;
+    uint8_t queue_id = 3;
+    uint32_t timeout = 0;
     printf("I am foo\n");
     TaskSleep(50);
     for(;;) {
         TaskSleep(100);
-        result = QueueSendToBlock(count, 0);
+        result = QueueSendToBlock(queue_id, count, timeout);
         switch (result) {
             case QUEUE_SENT_OK:
                 printf("Hello bar, I have a message to you, that's number: %d\n", count++);
@@ -34,7 +36,7 @@ void foo(void)
                 printf("Sorry bar, I can't send you the message right now\n");
                 break;
         }
-        if(count == 5) {
+        if(count == 3) {
             TaskKill();
         }
     }
@@ -44,10 +46,12 @@ void bar(void)
 {
     uint32_t item;
     uint8_t result;
+    uint8_t queue_id = 3;
+    uint32_t timeout = 0;
     printf("I am bar\n");
     for(;;) {
         TaskSleep(150);
-        result = QueueReciveFromBlock(&item, 0);
+        result = QueueReciveFromBlock(queue_id, &item, timeout);
         switch (result) {
             case QUEUE_RECEIVE_OK:
                 printf("OK foo, I have received your message, it's number: %d\n", item);

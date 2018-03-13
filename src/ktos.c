@@ -6,14 +6,13 @@
 
 #include "ktos.h"
 
-// Queue block.
-static queue_block_t queues[MAX_QUEUE_SIZE];
+// Queue control block.
+static queue_control_block_t queues[MAX_QUEUE_CONTROL_BLOCK_SIZE];
 
-// Task block.
+// Task control block.
 static task_control_block_t tasks[MAX_TASKS_SIZE];
 // Task var.
 static uint8_t task_count = 0;
-static uint8_t default_task = 0;  // the idle task
 uint8_t current_task = 0;
 
 // Memory pool.
@@ -23,6 +22,58 @@ uint32_t pool_count = 0;
 // OS var.
 uint32_t systicks = 0;
 static uint8_t is_os_started = 0;
+
+
+// Queue methods
+//  this is a FIFO(A.K.A. First In First Out) style queue
+void InitQueue(void)
+{
+    for(int i = 0; i < MAX_QUEUE_CONTROL_BLOCK_SIZE; i++) {
+        queue_control_block_t * this_qcb = queues + i;
+        this_qcb->id = (uint8_t)-1; //set all queue block id to 255 at initial state.
+        for(int j = 0; j < MAX_QUEUE_SIZE; j++) {
+            this_qcb->queues[j].status = QUEUE_EMPTY;
+        }
+    }
+}
+
+static queue_block_t * GetEmptyQueueBlock(uint8_t qcb_id)
+{
+    queue_control_block_t * this_qcb = queues;
+    for(int i = 0; i < MAX_QUEUE_CONTROL_BLOCK_SIZE; i++) {
+        this_qcb = queues + i;
+        if(this_qcb->id == qcb_id) { //check if the queue with the specified id exists.
+            queue_block_t * this_queue_block = this_qcb->queues;
+            for(int j = 0; j < MAX_QUEUE_SIZE; j++) {
+                this_queue_block += j;
+                if(this_queue_block->status == QUEUE_EMPTY) { //check if the queue has empty blocks
+                    return this_queue_block;
+                }
+            }
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+static queue_block_t * GetFilledQueueBlock(uint8_t qcb_id)
+{
+    queue_control_block_t * this_qcb = queues;
+    for(int i = 0; i < MAX_QUEUE_CONTROL_BLOCK_SIZE; i++) {
+        this_qcb = queues + i;
+        if(this_qcb->id == qcb_id) {
+            queue_block_t * this_queue_block = this_qcb->queues;
+            for(int j = 0; j < MAX_QUEUE_SIZE; j++) {
+                this_queue_block += j;
+                if(this_queue_block->status == QUEUE_FILLED) {
+                    return this_queue_block;
+                }
+            }
+            return NULL;
+        }
+    }
+    return NULL;
+}
 
 
 
@@ -50,48 +101,6 @@ void _InitTicker(void)
     NVIC_SetPriority(SysTick_IRQn, NVIC_EncodePriority(0, 0, 0));
     NVIC_SetPriority(SVCall_IRQn, NVIC_EncodePriority(0, 1, 0));
     NVIC_SetPriority(PendSV_IRQn, NVIC_EncodePriority(0, 2, 0));
-}
-
-// The System Tick Time (SysTick) generates interrupt requests on a regular basis.
-// This allows an OS to carry out context switching to support multiple tasking.
-void SysTick_Handler(void)
-{
-    if(!is_os_started) return;
-    systicks++;
-    
-    for(int i = 0; i < task_count; i++) {
-
-        task_control_block_t * this_task = tasks + i;
-
-        // Deal with sleeping tasks
-        if(this_task->sleep_time > 0 && this_task->sleep_time != NO_TIMEOUT) {
-            this_task->sleep_time -= SYSTICK_INTERVAL_MS;
-        }
-        if(this_task->sleep_time <= 0) {
-            this_task->status = TASK_STATE_READY;
-            this_task->sleep_time = 0;
-            continue;
-        }
-
-        // Deal with tasks blocked by queue
-        switch(this_task->status) {
-            case TASK_STATE_WAIT_TO_SENT_QUEUE:
-                if(GetEmptyQueue() != NULL) {
-                    this_task->status = TASK_STATE_READY;
-                    this_task->sleep_time = 0;
-                }
-                break;
-            case TASK_STATE_WAIT_TO_RECEIVE_QUEUE:
-                if(GetFilledQueue() != NULL) {
-                    this_task->status = TASK_STATE_READY;
-                    this_task->sleep_time = 0;
-                }
-                break;
-        }
-
-    }
-
-    _Yield();
 }
 
 
@@ -158,6 +167,103 @@ static uint32_t _ktSvcTaskSleep(uint8_t task_id, uint32_t sleep_time)
     return 0;
 }
 
+static uint8_t _ktSvcSendToQueue(uint8_t qcb_id, uint32_t item, uint32_t timeout)
+{
+    EnterCritical();
+
+    queue_block_t * this_queue = GetEmptyQueueBlock(qcb_id);
+
+    // Try to create a queue block with the specified qcb id.
+    if(this_queue == NULL) {
+        queue_control_block_t * this_qcb = queues;
+        for(int i = 0; i < MAX_QUEUE_CONTROL_BLOCK_SIZE; i++) {
+            this_qcb += i;
+            if(this_qcb->id == (uint8_t)-1) {
+                this_qcb->id = qcb_id;
+                this_queue = this_qcb->queues;
+            }
+        }
+    }
+    
+    // Try to push item to the queue
+    if(this_queue != NULL) {
+        this_queue->item_ptr = (uint32_t*)item;
+        this_queue->status = QUEUE_FILLED;
+        LeaveCritical();
+        return QUEUE_SENT_OK;
+    }
+
+    // If there is no queue empty, check timeout
+    if(timeout == 0) {
+        LeaveCritical();
+        return QUEUE_SENT_FAILED;
+    }
+
+    // Set the task to wait until timeout
+    task_control_block_t * this_task = tasks + current_task;
+    this_task->status = TASK_STATE_WAIT_TO_SENT_QUEUE;
+    this_task->sleep_time = timeout;
+    this_task->queue_id = qcb_id;
+    LeaveCritical();
+    _Yield();
+
+    // The task is ready again, let's try to push item to the queue again
+    EnterCritical();
+    this_queue = GetEmptyQueueBlock(qcb_id);
+    if(this_queue != NULL) {
+        this_queue->item_ptr = &item;
+        this_queue->status = QUEUE_FILLED;
+        LeaveCritical();
+        return QUEUE_SENT_OK;
+    }
+
+    LeaveCritical();
+    return QUEUE_SENT_FAILED;
+}
+
+static uint8_t _KtSvcReceiveFromQueue(uint8_t qcb_id, uint32_t *item_ptr, uint32_t timeout)
+{
+    EnterCritical();
+
+    queue_block_t * this_queue = GetFilledQueueBlock(qcb_id);
+
+    // Try to pull item from the queue
+    if(this_queue != NULL) {
+        *item_ptr = this_queue->item_ptr;
+        this_queue->status = QUEUE_EMPTY;
+        LeaveCritical();
+        return QUEUE_RECEIVE_OK;
+    }
+
+    // If there is no queue filled, check timeout
+    if(!timeout) {
+        LeaveCritical();
+        return QUEUE_RECEIVE_FAILED;
+    }
+
+    // Set the task to wait until timeout
+    task_control_block_t * this_task = tasks + current_task;
+    this_task->status = TASK_STATE_WAIT_TO_RECEIVE_QUEUE;
+    this_task->sleep_time = timeout;
+    this_task->queue_id = qcb_id;
+    LeaveCritical();
+    _Yield();
+
+    // The task is ready again, let's try to pull item from the queue again
+    EnterCritical();
+    this_queue = GetFilledQueueBlock(qcb_id);
+    if(this_queue != NULL) {
+        *item_ptr = this_queue->item_ptr;
+        this_queue->status = QUEUE_EMPTY;
+        LeaveCritical();
+        return QUEUE_RECEIVE_OK;
+    }
+
+    LeaveCritical();
+    return QUEUE_RECEIVE_FAILED;
+}
+
+
 // Supervisor Calls
 //   called by syscall
 void _ktSvcHandler(hardware_stack_frame_t * hw_ctx)
@@ -176,6 +282,12 @@ void _ktSvcHandler(hardware_stack_frame_t * hw_ctx)
             break;
         case SYSCALL_TASK_SLEEP:
             hw_ctx->r0 = _ktSvcTaskSleep(hw_ctx->r1, hw_ctx->r2);
+            break;
+        case SYSCALL_SEND_TO_QUEUE:
+            hw_ctx->r0 = _ktSvcSendToQueue(hw_ctx->r1, hw_ctx->r2, hw_ctx->r3);
+            break;
+        case SYSCALL_RECEIVE_FROM_QUEUE:
+            hw_ctx->r0 = _KtSvcReceiveFromQueue(hw_ctx->r1, hw_ctx->r2, hw_ctx->r3);
             break;
         default:
             hw_ctx->r0 = SYSCALL_UNDEFINED;
@@ -217,6 +329,7 @@ static inline uint32_t _Syscall(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t 
     );
     return result;
 }
+
 
 // Context switch methods
 //   called by PendSV_Handler.
@@ -323,13 +436,14 @@ uint8_t TaskCreate(
     this_task->id = (uint8_t)(task_count - 1); //task id increases by numerical order
     this_task->priority = priority;
     this_task->status = TASK_STATE_READY;
+    this_task->queue_id = (uint8_t)-2;
     this_task->stack_size = stack_size;
     this_task->stack_bottom = (uint32_t)stack_bottom;
     this_task->stack_top = this_task->stack_bottom - (16 * sizeof(uint32_t));
 
     // Init stack frame
     hardware_stack_frame_t * hardware_stack_frame = (hardware_stack_frame_t*)(this_task->stack_bottom - (8 * sizeof(uint32_t)));
-    software_stack_frame_t * software_stack_frame = (software_stack_frame_t*)this_task->stack_top;
+    //software_stack_frame_t * software_stack_frame = (software_stack_frame_t*)this_task->stack_top;
     //memset(hardware_stack_frame, 0, sizeof(hardware_stack_frame));
     //memset(software_stack_frame, 0, sizeof(software_stack_frame));
 
@@ -353,121 +467,62 @@ void TaskSleep(uint32_t sleep_time)
     _Syscall(SYSCALL_TASK_SLEEP, current_task, sleep_time, 0);
 }
 
-// Queue methods
-//  this is a FIFO(A.K.A. First In First Out) style queue
-void InitQueue(void)
+
+uint8_t QueueSendToBlock(uint8_t qcb_id, uint32_t item, uint32_t timeout)
 {
-    for(int i = 0; i < MAX_QUEUE_SIZE; i++) {
-        queue_block_t * this_queue = queues + i;
-        this_queue->status = QUEUE_EMPTY;
-    }
+    return _Syscall(SYSCALL_SEND_TO_QUEUE, qcb_id, item, timeout);
 }
 
-queue_block_t * GetEmptyQueue(void)
+uint8_t QueueReciveFromBlock(uint8_t qcb_id, uint32_t *item_ptr, uint32_t timeout)
 {
-    // FIFO style
-    for(int i = 0; i < MAX_QUEUE_SIZE; i++) {
-        queue_block_t * this_queue = queues + i;
-        if(this_queue->status == QUEUE_EMPTY) {
-            return this_queue;
-        }
-    }
-    return NULL;
+    return _Syscall(SYSCALL_RECEIVE_FROM_QUEUE, qcb_id, item_ptr, timeout);
 }
 
-queue_block_t * GetFilledQueue(void)
-{
-    // FIFO style
-    for(int i = 0; i < MAX_QUEUE_SIZE; i++) {
-        queue_block_t * this_queue = queues + i;
-        if(this_queue->status == QUEUE_FILLED) {
-            return this_queue;
-        }
-    }
-    return NULL;
-}
 
-uint8_t QueueSendToBlock(uint32_t item, uint32_t timeout)
+// The System Tick Time (SysTick) generates interrupt requests on a regular basis.
+// This allows an OS to carry out context switching to support multiple tasking.
+void SysTick_Handler(void)
 {
-    EnterCritical();
-
-    queue_block_t * this_queue = GetEmptyQueue();
+    if(!is_os_started) return;
+    systicks++;
     
-    // Try to push item to the queue
-    if(this_queue != NULL) {
-        this_queue->item_ptr = item;
-        this_queue->status = QUEUE_FILLED;
-        LeaveCritical();
-        return QUEUE_SENT_OK;
+    for(int i = 0; i < task_count; i++) {
+
+        task_control_block_t * this_task = tasks + i;
+
+        // Deal with sleeping tasks
+        if(this_task->sleep_time > 0 && this_task->sleep_time != NO_TIMEOUT) {
+            this_task->sleep_time -= SYSTICK_INTERVAL_MS;
+        }
+        if(this_task->sleep_time <= 0 && this_task->status != TASK_STATE_KILLED) {
+            this_task->status = TASK_STATE_READY;
+            this_task->sleep_time = 0;
+            continue;
+        }
+
+        // Deal with tasks blocked by queue
+        switch(this_task->status) {
+            case TASK_STATE_WAIT_TO_SENT_QUEUE:
+                if(GetEmptyQueueBlock(this_task->queue_id) != NULL) {
+                    this_task->status = TASK_STATE_READY;
+                    this_task->sleep_time = 0;
+                    this_task->queue_id = (uint8_t)-2;
+                }
+                break;
+            case TASK_STATE_WAIT_TO_RECEIVE_QUEUE:
+                if(GetFilledQueueBlock(this_task->queue_id) != NULL) {
+                    this_task->status = TASK_STATE_READY;
+                    this_task->sleep_time = 0;
+                    this_task->queue_id = (uint8_t)-2;
+                }
+                break;
+        }
+
     }
 
-    // If there is no queue empty, check timeout
-    if(timeout == 0) {
-        LeaveCritical();
-        return QUEUE_SENT_FAILED;
-    }
-
-    // Set the task to wait until timeout
-    task_control_block_t * this_task = tasks + current_task;
-    this_task->status = TASK_STATE_WAIT_TO_SENT_QUEUE;
-    this_task->sleep_time = timeout;
-    LeaveCritical();
     _Yield();
-
-    // The task is ready again, let's try to push item to the queue again
-    EnterCritical();
-    this_queue = GetEmptyQueue();
-    if(this_queue != NULL) {
-        this_queue->item_ptr = &item;
-        this_queue->status = QUEUE_FILLED;
-        LeaveCritical();
-        return QUEUE_SENT_OK;
-    }
-
-    LeaveCritical();
-    return QUEUE_SENT_FAILED;
 }
 
-uint8_t QueueReciveFromBlock(uint32_t *item_ptr, uint32_t timeout)
-{
-    EnterCritical();
-
-    queue_block_t * this_queue = GetFilledQueue();
-
-    // Try to pull item from the queue
-    if(this_queue != NULL) {
-        *item_ptr = this_queue->item_ptr;
-        this_queue->status = QUEUE_EMPTY;
-        LeaveCritical();
-        return QUEUE_RECEIVE_OK;
-    }
-
-    // If there is no queue filled, check timeout
-    if(!timeout) {
-        LeaveCritical();
-        return QUEUE_RECEIVE_FAILED;
-    }
-
-    // Set the task to wait until timeout
-    task_control_block_t * this_task = tasks + current_task;
-    this_task->status = TASK_STATE_WAIT_TO_RECEIVE_QUEUE;
-    this_task->sleep_time = timeout;
-    LeaveCritical();
-    _Yield();
-
-    // The task is ready again, let's try to pull item from the queue again
-    EnterCritical();
-    this_queue = GetFilledQueue();
-    if(this_queue != NULL) {
-        item_ptr = this_queue->item_ptr;
-        this_queue->status = QUEUE_EMPTY;
-        LeaveCritical();
-        return QUEUE_RECEIVE_OK;
-    }
-
-    LeaveCritical();
-    return QUEUE_RECEIVE_FAILED;
-}
 
 // Critical region methods
 //   Setting PRIMASK to 1 raises the execution priority to 0.

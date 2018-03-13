@@ -1,3 +1,9 @@
+//
+// config.h @ ktOS
+//
+// Created by Kotorinyanya.
+//
+
 #include "config.h"
 #include "types.h"
 

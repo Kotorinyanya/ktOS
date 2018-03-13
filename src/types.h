@@ -9,6 +9,14 @@
 
 #include "stm32f10x.h"
 
+#define SYSTICK_FREQUENCY_HZ 1000
+#define SYSTICK_INTERVAL_MS 1000 / SYSTICK_FREQUENCY_HZ  // Please make sure that SYSTICK_INTERVAL_MS is an interger.
+
+#define MAX_TASKS_SIZE 10
+#define MAX_QUEUE_SIZE 5
+#define MAX_QUEUE_CONTROL_BLOCK_SIZE 5
+#define MEM_POOL_SIZE 3000
+
 typedef void(*TaskFunction)(void *);
 
 typedef enum STATUS_CODE {
@@ -46,7 +54,9 @@ typedef enum SYSCALL_CODE {
 /*******  Syscall Code Definitions *******************************************************************/
     SYSCALL_START_OS                   = 22,
     SYSCALL_TASK_SLEEP                 = 23,
-    SYSCALL_TASK_KILL                  = 24
+    SYSCALL_TASK_KILL                  = 24,
+    SYSCALL_SEND_TO_QUEUE              = 25,
+    SYSCALL_RECEIVE_FROM_QUEUE         = 26
 } SYSCALL_CODE_DEF;
 
 
@@ -85,14 +95,19 @@ typedef struct {
     uint32_t stack_size;
     uint32_t stack_top;
     uint32_t stack_bottom;
+    uint8_t queue_id;
     software_stack_frame_t software_stack_frame;
 } task_control_block_t;
 
-// This defines the queue block for Inter Process Communication
 typedef struct {
     uint8_t status;
     uint32_t * item_ptr;
 } queue_block_t;
+
+typedef struct {
+    uint8_t id;
+    queue_block_t queues[MAX_QUEUE_SIZE];
+} queue_control_block_t;
 
 
 #endif //KTOS_TYPES_H
