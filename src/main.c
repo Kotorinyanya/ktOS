@@ -34,6 +34,9 @@ void foo(void)
                 printf("Sorry bar, I can't send you the message right now\n");
                 break;
         }
+        if(count == 5) {
+            TaskKill();
+        }
     }
 }
 
@@ -43,7 +46,7 @@ void bar(void)
     uint8_t result;
     printf("I am bar\n");
     for(;;) {
-        TaskSleep(100);
+        TaskSleep(150);
         result = QueueReciveFromBlock(&item, 0);
         switch (result) {
             case QUEUE_RECEIVE_OK:
