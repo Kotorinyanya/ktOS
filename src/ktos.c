@@ -10,8 +10,7 @@
 // Queue control block.
 static queue_control_block_t queue_control_blocks[MAX_QUEUE_CONTROL_BLOCK_COUNT];
 // Task control block.
-//TODO: static ? buggy printf ?
-task_control_block_t task_control_blocks[MAX_TASKS_COUNT];
+static task_control_block_t task_control_blocks[MAX_TASKS_COUNT];
 // Task var.
 static uint8_t task_count = 0;
 static uint8_t current_task = 0;

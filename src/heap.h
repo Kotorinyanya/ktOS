@@ -14,4 +14,6 @@ struct _mem_block_header_t * AllocateMemBlock(uint32_t size);
 
 void FreeMemBlock(struct _mem_block_header_t *this_block);
 
+uint32_t Align(uint32_t size);
+
 #endif //KOTS_HEAP_H

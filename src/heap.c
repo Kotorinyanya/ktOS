@@ -6,7 +6,7 @@
 
 #include "heap.h"
 
-static uint32_t mem_pool[MEM_POOL_SIZE];
+static char mem_pool[MEM_POOL_SIZE];
 
 mem_block_header_t *RequestFreeBlock(uint32_t size) {
     
@@ -29,11 +29,12 @@ mem_block_header_t *RequestFreeBlock(uint32_t size) {
         }
         this_block_i = this_block_i->next_block;
     }
-
+    
     this_block = this_block_i;
     
     //if there is enough space on the 'top'.
-    available_size = (uint32_t) (mem_pool + MEM_POOL_SIZE) - (uint32_t) this_block - HEADER_SIZE * 2;//with one additionally new header for linking.
+    available_size = (uint32_t) (mem_pool + MEM_POOL_SIZE) - (uint32_t) this_block -
+                     HEADER_SIZE * 2;//with one additionally new header for linking.
     if (available_size >= size) {
         this_block->size = size;
         if (this_block->past_block != NULL) { //deal with initial block.
@@ -52,9 +53,7 @@ mem_block_header_t *RequestFreeBlock(uint32_t size) {
 struct _mem_block_header_t *AllocateMemBlock(uint32_t size) {
     
     //re-align stack size to 8 bytes.
-    if (size % 2 != 0) {
-        size = (size / 2) * 2;
-    }
+    size = Align(size);
     
     mem_block_header_t *mem_block = RequestFreeBlock(size);
     if (mem_block != NULL) {
@@ -71,4 +70,8 @@ struct _mem_block_header_t *AllocateMemBlock(uint32_t size) {
 void FreeMemBlock(struct _mem_block_header_t *this_block) {
     this_block->past_block->next_block = this_block->next_block;
     this_block = NULL;
+}
+
+uint32_t Align(uint32_t size) {
+    return (size / 8) * 8;
 }

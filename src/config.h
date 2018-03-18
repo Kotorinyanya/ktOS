@@ -16,7 +16,7 @@
 #define QUEUE_SIZE 1
 #define MAX_QUEUE_CONTROL_BLOCK_COUNT 5
 
-#define MEM_POOL_SIZE 3000
+#define MEM_POOL_SIZE 16000
 
 
 #endif //KTOS_CONF_H

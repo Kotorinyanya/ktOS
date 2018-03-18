@@ -21,23 +21,23 @@ void Init(void)
 
 void foo(void)
 {
-    uint32_t count = 0;
-    uint8_t result;
-    uint8_t queue_id = 3;
-    uint32_t timeout = 0;
+    uint32_t count = 1;
+    int result;
+    int queue_id = 3;
+    int timeout = 0;
     printf("I am foo\n");
     for(;;) {
         TaskSleep(100);
-        result = QueueSendToBlock(queue_id, ++count, timeout);
+        result = QueueSendToBlock(queue_id, count, timeout);
         switch (result) {
             case QUEUE_SENT_OK:
-                printf("Hello bar %d\n", count);
+                printf("Hello bar %d\n", count++);
                 break;
             case QUEUE_SENT_FAILED:
                 printf("Sorry bar \n");
                 break;
         }
-        if(count == 6) {
+        if(count == 5) {
             TaskKill();
         }
     }
@@ -46,9 +46,9 @@ void foo(void)
 void bar(void)
 {
     uint32_t item;
-    uint8_t result;
-    uint8_t queue_id = 3;
-    uint32_t timeout = 0;
+    int result;
+    int queue_id = 3;
+    int timeout = 0;
     printf("I am bar\n");
     for(;;) {
         TaskSleep(150);
@@ -68,8 +68,9 @@ int main(void)
 {
     InitQueueControlBlock();
     InitTaskControlBlock();
-    TaskCreate((TaskFunction)foo, 0, 1024, 3, "foo");
-    TaskCreate((TaskFunction)bar, 0, 1024, 3, "bar");
+    
+    TaskCreate((TaskFunction)foo, 0, 2048, 3, "foo");
+    TaskCreate((TaskFunction)bar, 0, 2048, 3, "bar");
 
     ktOSStart();
 
