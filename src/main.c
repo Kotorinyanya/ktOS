@@ -4,6 +4,8 @@
 // Created by Kotorinyanya.
 //
 #include "ktos.h"
+#include "../CMSIS/CM3/CoreSupport/core_cm3.h"
+#include "config.h"
 #include <stdio.h>
 
 void Init(void)
@@ -24,19 +26,18 @@ void foo(void)
     uint8_t queue_id = 3;
     uint32_t timeout = 0;
     printf("I am foo\n");
-    TaskSleep(50);
     for(;;) {
         TaskSleep(100);
-        result = QueueSendToBlock(queue_id, count, timeout);
+        result = QueueSendToBlock(queue_id, ++count, timeout);
         switch (result) {
             case QUEUE_SENT_OK:
-                printf("Hello bar, I have a message to you, that's number: %d\n", count++);
+                printf("Hello bar %d\n", count);
                 break;
             case QUEUE_SENT_FAILED:
-                printf("Sorry bar, I can't send you the message right now\n");
+                printf("Sorry bar \n");
                 break;
         }
-        if(count == 3) {
+        if(count == 6) {
             TaskKill();
         }
     }
@@ -51,13 +52,13 @@ void bar(void)
     printf("I am bar\n");
     for(;;) {
         TaskSleep(150);
-        result = QueueReciveFromBlock(queue_id, &item, timeout);
+        result = QueueReceiveFromBlock(queue_id, &item, timeout);
         switch (result) {
             case QUEUE_RECEIVE_OK:
-                printf("OK foo, I have received your message, it's number: %d\n", item);
+                printf("OK foo %d\n", item);
                 break;
             case QUEUE_RECEIVE_FAILED:
-                printf("Sorry foo, I can't receive your message right now\n");
+                printf("Sorry foo \n");
                 break;
         }
     }
@@ -65,9 +66,10 @@ void bar(void)
 
 int main(void)
 {
-
-    TaskCreate((TaskFunction)foo, 0, 1024, 3);
-    TaskCreate((TaskFunction)bar, 0, 1024, 3);
+    InitQueueControlBlock();
+    InitTaskControlBlock();
+    TaskCreate((TaskFunction)foo, 0, 1024, 3, "foo");
+    TaskCreate((TaskFunction)bar, 0, 1024, 3, "bar");
 
     ktOSStart();
 

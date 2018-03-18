@@ -1,5 +1,5 @@
 # Put all the source files here
-SRCS = src/main.c src/ktos.c src/helper.c
+SRCS = src/main.c src/ktos.c src/helper.c src/heap.c
 
 # Binary will be generated with this name (.elf, etc)
 PROJ_NAME = ktos

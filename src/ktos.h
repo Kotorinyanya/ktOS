@@ -8,24 +8,27 @@
 #define KTOS_KTOS_H
 
 #include "types.h"
-#inlcude "config.h"
-#include "stm32f10x.h"
 #include "helper.h"
+#include "../CMSIS/CM3/DeviceSupport/ST/STM32F10x/stm32f10x.h"
 
-#define NO_TIMEOUT 0xffffffff
-#define NULL 0
+int ktOSStart(void);
 
-uint32_t ktOSStart(void);
+void InitTaskControlBlock(void);
 
-uint8_t TaskCreate(TaskFunction entry, void * arg, uint32_t stack_size, uint8_t priority);
+int TaskCreate(TaskFunction entry, void *arg, uint32_t stack_size, uint8_t priority, const char *name);
+
 void TaskKill(void);
+
 void TaskSleep(uint32_t sleep_time);
 
-void InitQueue(void);
-uint8_t QueueSendToBlock(uint8_t qcb_id, uint32_t item, uint32_t timeout);
-uint8_t QueueReciveFromBlock(uint8_t qcb_id, uint32_t *item_ptr, uint32_t timeout);
+void InitQueueControlBlock(void);
+
+int QueueSendToBlock(uint8_t qcb_id, int32_t item, uint32_t timeout);
+
+int QueueReceiveFromBlock(uint8_t qcb_id, uint32_t *item_ptr, uint32_t timeout);
 
 void EnterCritical(void);
+
 void LeaveCritical(void);
 
 #endif //KTOS_KTOS_H
